@@ -2,11 +2,8 @@
 package memscan
 
 import (
-	"fmt"
+	"context"
 	"math"
-	"sync"
-	"syscall"
-	"unsafe"
 )
 
 //Generate a slice of mem scan ranges
@@ -27,100 +24,63 @@ func GenScanRange(from uint64, length uint64, bsize uint64) []MemRange {
 			bsize = (bsize - (endAddr - to))
 			endAddr = to
 		}
-		mranges = append(mranges, MemRange{start: from, end: endAddr, bsize: bsize})
+		mranges = append(mranges, MemRange{Start: from, End: endAddr, bsize: bsize})
 		from = endAddr
 	}
 
 	return mranges
 }
 
-func readMemoryAddress(pid int, m MemRange) (*[]byte, error) {
-	srcAddr, dstAddr := new(iovec), new(iovec)
-
-	srcAddr.base = uintptr(m.start)
-	srcAddr.size = m.bsize
-
-	//we need to create the dst buffer
-	mdata := make([]byte, m.bsize)
-	dstAddr.base = uintptr(unsafe.Pointer(&mdata[0]))
-	dstAddr.size = m.bsize
-
-	_, _, e1 := syscall.RawSyscall6(310, uintptr(pid), uintptr(unsafe.Pointer(dstAddr)), 1, uintptr(unsafe.Pointer(srcAddr)), 1, 0)
-	var err error
-	if e1 != 0 {
-		err = e1
-	}
-
-	return &mdata, err
-}
-
-//agregar un channel de cancle
 //Scan a process for the given memory ranges , invoking callback function with cunks of bsize bytes
-func ScanMemory(pid int, mranges *[]MemRange, bsize uint64, callback func(data *[]byte, mrange MemRange) bool, done <-chan int) {
+func ScanMemory(pid int, mranges *[]MemRange, bsize uint64, callback func(data *[]byte, mrange MemRange, err error) uint8) {
 
-	var wg sync.WaitGroup
-	wg.Add(len(*mranges))
+	totalGoRoutines := 6
+	scanWork := func(mRangeChannel chan MemRange, ctx context.Context, resultChan chan uint8) {
+		for {
+			select {
+			case <-ctx.Done(): // Done returns a channel that's closed when work done on behalf of this context is canceled
+				resultChan <- WorkerExit
+				return
+			case m, ok := <-mRangeChannel:
+				if !ok {
+					resultChan <- WorkerExit
+					return
+				}
+				data, err := readMemoryAddress(pid, m)
+				if ret := callback(data, m, err); ret == StopScan {
+					//this is to Cancel without blocking with waitGroup()
+					resultChan <- ret
+				}
 
-	scanWork := func(m MemRange) {
-		defer wg.Done()
-		fmt.Printf("Scanning %x to %x\n", m.start, m.end)
-
-		select {
-		case <-done:
-			return
-		default:
-			if data, err := readMemoryAddress(pid, m); err == nil {
-				callback(data, m)
-
-			} else {
-				fmt.Printf("ERROR: %v\n", err)
 			}
 		}
+
 	}
+
+	//Note: all this mess could be replaced by just wg.Wait() if you don't want to cancel
+	mRangeChannel := make(chan MemRange)
+	resultChan := make(chan uint8)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	for i := 0; i < totalGoRoutines; i++ {
+		go scanWork(mRangeChannel, ctx, resultChan)
+	}
+
 	for _, mRange := range *mranges {
-		go scanWork(mRange)
+		mRangeChannel <- mRange
 	}
 
-	wg.Wait()
-}
-
-/* Look for Text Patterns actually on each read bucket
-func scanFullMemoryForRegexp(pid int, from uint64, lenght uint64, bsize uint64, sreg *regexp.Regexp) {
-
-	var i, endAddr uint64
-	to := from + lenght
-	totalBuckets := (lenght / bsize) + 1
-
-	if totalBuckets == 0 {
-		totalBuckets = 1
-	}
-	fmt.Printf("To is %x And Bsize is %x and From\n", to, bsize)
-	for i = 0; i < totalBuckets; i++ {
-
-		endAddr = (from + bsize)
-		fmt.Printf("and end addr is %x and From: %x\n", endAddr, from)
-		if from >= to {
-			break
-		}
-		if endAddr > to {
-			bsize = (bsize - (endAddr - to))
-			fmt.Printf("Correcting size since %x  > %x and bsize now is %v\n", endAddr, to, bsize)
-
-			endAddr = to
-
-		}
-		fmt.Printf("Going to scan bucket %d - Start: %x End: %x\n", i, from, endAddr)
-		if data, err := readMemoryAddress(pid, from, endAddr, bsize); err == nil {
-			if sreg.Match(data) {
-				fmt.Println("Data: %v\n", data)
+	close(mRangeChannel)
+	defer close(resultChan)
+	for total := totalGoRoutines; total != 0; {
+		select {
+		case v, _ := <-resultChan:
+			if v == StopScan {
+				cancel()
+			} else if v == WorkerExit {
+				total--
 			}
-
-		} else {
-			fmt.Printf("ERROR: %v\n", err)
 		}
-
-		from = endAddr
-
 	}
+
 }
-*/
