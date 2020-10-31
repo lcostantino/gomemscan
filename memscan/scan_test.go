@@ -42,9 +42,11 @@ func Test_GenScanRanges(t *testing.T) {
 			want: []MemRange{{Start: 0x5639f5bfd000, End: 0x5639f5bfe000, bsize: 4096}, {Start: 0x5639f5bfe000, End: 0x5639f5bfefa0, bsize: 4000}},
 		},
 	}
+	ps := new(MemReader)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := GenScanRange(tt.args.from, tt.args.length, tt.args.bsize); !reflect.DeepEqual(got, tt.want) {
+
+			if got := ps.GenScanRange(tt.args.from, tt.args.length, tt.args.bsize); !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("genScanRange() = %v\n want %v", got, tt.want)
 			}
 		})
@@ -53,7 +55,8 @@ func Test_GenScanRanges(t *testing.T) {
 
 func ExampleGenScanRange() {
 
-	for _, rr := range GenScanRange(0x40, 0x20, 0x10) {
+	ps := new(MemReader)
+	for _, rr := range ps.GenScanRange(0x40, 0x20, 0x10) {
 		fmt.Printf("0x%x 0x%x ", rr.Start, rr.End)
 	}
 	// Output: 0x40 0x50 0x50 0x60

@@ -10,6 +10,7 @@ type MemRange struct {
 	Start uint64 `json:"Start"`
 	End   uint64 `json:"End"`
 	bsize uint64 `json:"-"`
+	Name  string `json:"-"`
 }
 
 //For each Match on a chunk all found locations

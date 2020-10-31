@@ -1,6 +1,11 @@
 package memscan
 
 import (
+	"bufio"
+	"fmt"
+	"io"
+	"os"
+	"regexp"
 	"syscall"
 	"unsafe"
 )
@@ -8,7 +13,7 @@ import (
 const vmreadSyscall = 310
 
 //Linux Only
-func readMemoryAddress(pid int, m MemRange) (*[]byte, error) {
+func (ms *MemReader) readMemoryAddress(pid int, m MemRange) (*[]byte, error) {
 	srcAddr, dstAddr := new(iovec), new(iovec)
 
 	srcAddr.base = uintptr(m.Start)
@@ -26,4 +31,78 @@ func readMemoryAddress(pid int, m MemRange) (*[]byte, error) {
 	}
 
 	return &mdata, err
+}
+
+func buildStringFromPermBits(permMap uint8) string {
+
+	perms := make([]byte, 3)
+	vals := []struct {
+		n uint8
+		s byte
+	}{{4, 'r'}, {2, 'w'}, {1, 'x'}}
+
+	if permMap == 0 {
+		return ".*"
+	}
+	for idx, v := range vals {
+		if permMap&v.n == v.n {
+			perms[idx] = v.s
+		} else {
+			perms[idx] = '-'
+		}
+	}
+	return string(perms)
+}
+func (ms *MemReader) parseMapReader(ior *bufio.Reader, permMap uint8) []MemRange {
+	//7fb96814d000-7fb968152000 r--p 0000e000 08:02 6294757                    /usr/lib/x86_64-linux-gnu/libEGL.so.1.1.0
+	mRanges := make([]MemRange, 0, 10)
+
+	var start, end, ig uint64
+	var perm, image string
+
+	regPerm := buildStringFromPermBits(permMap)
+	for {
+		line, err := ior.ReadString('\n')
+		if err != nil && err == io.EOF {
+			break
+		}
+		if _, err := fmt.Sscanf(line, "%x-%x %s %x %d:%d %d\t%s", &start, &end, &perm, &ig, &ig, &ig, &ig, &image); err == nil {
+			//not really needed but can be handy in the future
+			if m, _ := regexp.MatchString(regPerm, perm); m {
+				mRanges = append(mRanges, MemRange{Start: start, End: end, Name: image})
+			}
+		}
+	}
+	return mRanges
+
+}
+
+//returns memory maps from /proc/pid/maps
+// MemRange is just a holder for MAPS will be recreated properly with bsize afterwards
+func (ms *MemReader) readMemoryMapFromProc(pid int, permMap uint8) ([]MemRange, error) {
+	var fp *os.File
+	var err error
+	if fp, err = os.Open(fmt.Sprintf("/proc/%d/maps", pid)); err != nil {
+		return nil, err
+	}
+	defer fp.Close()
+	ranges := ms.parseMapReader(bufio.NewReader(fp), permMap)
+
+	return ranges, err
+
+}
+
+//For a given PID returns the memory mapped
+func (ms *MemReader) GetScanRangeForPidMaps(pid int, permMap uint8, bucketLen uint64) ([]MemRange, error) {
+	ranges, err := ms.readMemoryMapFromProc(pid, permMap)
+	if err != nil {
+		return nil, err
+	}
+	scanRanges := make([]MemRange, 0, len(ranges))
+	//build the real Ranges
+	for _, memMap := range ranges {
+		scanRanges = append(scanRanges, ms.GenScanRange(memMap.Start, memMap.End-memMap.Start, bucketLen, memMap.Name)...)
+	}
+	return scanRanges, nil
+
 }
