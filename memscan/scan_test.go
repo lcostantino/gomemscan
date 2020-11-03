@@ -46,7 +46,7 @@ func Test_GenScanRanges(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 
-			if got := ps.GenScanRange(tt.args.from, tt.args.length, tt.args.bsize); !reflect.DeepEqual(got, tt.want) {
+			if got := ps.GenScanRange(tt.args.from, tt.args.length, tt.args.bsize, ""); !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("genScanRange() = %v\n want %v", got, tt.want)
 			}
 		})
@@ -56,7 +56,7 @@ func Test_GenScanRanges(t *testing.T) {
 func ExampleGenScanRange() {
 
 	ps := new(MemReader)
-	for _, rr := range ps.GenScanRange(0x40, 0x20, 0x10) {
+	for _, rr := range ps.GenScanRange(0x40, 0x20, 0x10, "") {
 		fmt.Printf("0x%x 0x%x ", rr.Start, rr.End)
 	}
 	// Output: 0x40 0x50 0x50 0x60

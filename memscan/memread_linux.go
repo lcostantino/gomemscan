@@ -10,7 +10,11 @@ import (
 	"unsafe"
 )
 
-const vmreadSyscall = 310
+const (
+	VM_READ_SYSCALL = 310
+	IGNORE_PERM     = "---p"
+	IGNORE_NAME     = "[vvar]"
+)
 
 //Linux Only
 func (ms *MemReader) readMemoryAddress(pid int, m MemRange) (*[]byte, error) {
@@ -24,7 +28,7 @@ func (ms *MemReader) readMemoryAddress(pid int, m MemRange) (*[]byte, error) {
 	dstAddr.base = uintptr(unsafe.Pointer(&mdata[0]))
 	dstAddr.size = m.bsize
 
-	_, _, e1 := syscall.RawSyscall6(vmreadSyscall, uintptr(pid), uintptr(unsafe.Pointer(dstAddr)), 1, uintptr(unsafe.Pointer(srcAddr)), 1, 0)
+	_, _, e1 := syscall.RawSyscall6(VM_READ_SYSCALL, uintptr(pid), uintptr(unsafe.Pointer(dstAddr)), 1, uintptr(unsafe.Pointer(srcAddr)), 1, 0)
 	var err error
 	if e1 != 0 {
 		err = e1
@@ -54,7 +58,6 @@ func buildStringFromPermBits(permMap uint8) string {
 	return string(perms)
 }
 func (ms *MemReader) parseMapReader(ior *bufio.Reader, permMap uint8) []MemRange {
-	//7fb96814d000-7fb968152000 r--p 0000e000 08:02 6294757                    /usr/lib/x86_64-linux-gnu/libEGL.so.1.1.0
 	mRanges := make([]MemRange, 0, 10)
 
 	var start, end, ig uint64
@@ -63,18 +66,26 @@ func (ms *MemReader) parseMapReader(ior *bufio.Reader, permMap uint8) []MemRange
 	regPerm := buildStringFromPermBits(permMap)
 	for {
 		line, err := ior.ReadString('\n')
+
 		if err != nil && err == io.EOF {
 			break
 		}
-		if _, err := fmt.Sscanf(line, "%x-%x %s %x %d:%d %d\t%s", &start, &end, &perm, &ig, &ig, &ig, &ig, &image); err == nil {
-			//not really needed but can be handy in the future
+		image = ""
+		if _, err := fmt.Sscanf(line, "%x-%x %s %x %d:%d %d\t%s", &start, &end, &perm, &ig, &ig, &ig, &ig, &image); err != nil {
+			if _, err = fmt.Sscanf(line, "%x-%x %s %x %d:%d %d\t", &start, &end, &perm, &ig, &ig, &ig, &ig); err != nil {
+				continue
+			}
+		}
+
+		//not really needed but can be handy in the future
+		if perm != IGNORE_PERM && image != IGNORE_NAME {
 			if m, _ := regexp.MatchString(regPerm, perm); m {
 				mRanges = append(mRanges, MemRange{Start: start, End: end, Name: image})
 			}
 		}
 	}
-	return mRanges
 
+	return mRanges
 }
 
 //returns memory maps from /proc/pid/maps

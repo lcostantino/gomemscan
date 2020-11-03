@@ -32,6 +32,7 @@ type MemScanResult struct {
 
 type GoMemScanArgs struct {
 	pattern             string
+	patternString       string
 	pid                 int
 	bucketLen           uint64
 	startAddress        uint64
@@ -56,7 +57,9 @@ func parseCommandLineAndValidate() GoMemScanArgs {
 
 	args := GoMemScanArgs{}
 
-	flag.StringVar(&args.pattern, "pattern", "", "(*required) Pattern to match Ex: \\x41\\x41 - Warning: a match all pattern will hold all the chunks in memory!")
+	flag.StringVar(&args.pattern, "pattern", "", "(*required if patternString not provided) Bytes Pattern to match Ex: \\x41\\x41 - Warning: a match all pattern will hold all the chunks in memory!")
+	flag.StringVar(&args.patternString, "string", "", "Convert the string to bytes pattern - Use pattern for regex match")
+
 	flag.IntVar(&args.pid, "pid", 0, "(*required) Pid to read memory from")
 	flag.Uint64Var(&args.bucketLen, "blen", 1024*1024, "Bucket size where the pattern is applied")
 	flag.Uint64Var(&args.startAddress, "from", 0, "Start address (0x4444444)")
@@ -79,6 +82,14 @@ func parseCommandLineAndValidate() GoMemScanArgs {
 		os.Exit(1)
 	}
 
+	if args.patternString != "" {
+		//convert to \\byte\\byte etc
+		for _, x := range args.patternString {
+			args.pattern += fmt.Sprintf("\\\\%x", x)
+		}
+
+	}
+
 	if args.pattern == "" {
 		fmt.Println(au.Red("Error: Missing Scan Pattern\n"))
 		os.Exit(1)
@@ -98,7 +109,7 @@ func parseCommandLineAndValidate() GoMemScanArgs {
 		os.Exit(1)
 	}
 
-	if args.bytesToRead < args.bucketLen {
+	if args.bytesToRead < args.bucketLen && args.fullScan == false {
 		args.bucketLen = args.bytesToRead
 	}
 
@@ -107,7 +118,7 @@ func parseCommandLineAndValidate() GoMemScanArgs {
 	}
 
 	if args.justMatch {
-		fmt.Println(au.BrightGreen(("Just match argument found. Raw data and mem context disabled")))
+		fmt.Println(au.BrightGreen("Raw data and mem context disabled"))
 		args.includeRawDump = false
 	}
 	return args
@@ -122,13 +133,11 @@ func main() {
 	scanner := new(memscan.MemReader)
 	if args.fullScan {
 		var err error
+
 		mRanges, err = scanner.GetScanRangeForPidMaps(args.pid, uint8(args.permMap), args.bucketLen)
 		if err != nil {
 			fmt.Println(au.Sprintf(au.Red("Error: Cannot read process mmap => %s\n"), au.BrightBlue(err)))
 			os.Exit(1)
-		}
-		for _, rs := range mRanges {
-			fmt.Printf("Read From %x to %x   => Size: %d\n", rs.Start, rs.End, rs.End-rs.Start)
 		}
 	} else {
 		mRanges = scanner.GenScanRange(args.startAddress, args.bytesToRead, args.bucketLen, "")
@@ -179,7 +188,7 @@ func main() {
 	/* Output results */
 	result := MemScanResult{Bsize: args.bucketLen, Pid: args.pid, ImageName: imageName, cmdLine: cmdLine}
 	processOutput(&result, matches, args.includeRawDump, args.outputFile, args.contextLength)
-	resultJson, err := json.MarshalIndent(result, "", "")
+	resultJson, err := json.MarshalIndent(result, "", "\t")
 	if args.outputFile != "" {
 		if err == nil {
 			saveRawChunk(&resultJson, args.outputFile)

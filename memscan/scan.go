@@ -31,7 +31,6 @@ func (ms *MemReader) GenScanRange(from uint64, length uint64, bsize uint64, name
 		mranges = append(mranges, MemRange{Start: from, End: endAddr, bsize: bsize, Name: name})
 		from = endAddr
 	}
-
 	return mranges
 }
 
