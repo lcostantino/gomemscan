@@ -18,7 +18,7 @@ The current implementation is Linux based only, targeting kernels that support p
 ## Build
 
 - This project use [GoReleaser](https://goreleaser.com/) to create proper artifacts and release control.
-- A Makefile is provided just for dev purposes
+- A Makefile is provided just for dev purposes and binaries at (https://github.com/lcostantino/gomemscan/releases/latest)
 
 
 ## Usage
