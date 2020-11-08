@@ -12,7 +12,7 @@ The current implementation just look for a byte pattern, but adding Yara for ins
 
 ## Limitations
 
-Current implemntation is Linux based only, targeting kernels with support for THIS SYSCALL, but OSX and Windows providers similar capabilities that may be added in the future.
+Current implemntation is Linux based only, targeting kernels that support process_vm_readv , but OSX and Windows provides similar capabilities that may be added in the future.
 
 * Only tested 64 bits
 
@@ -51,7 +51,7 @@ Usage of ./gomemscan:
   -print-output
     	Print json output if file not provided (default true)
   -raw-dump
-    	Generate a file per chunk that matched with binary data
+    	Generate a file per chunk that matched with binary data of blen size
   -stop-first-match
     	Stop after the first chunk match
   -string string
@@ -73,16 +73,22 @@ In this test sample, there's a dummy malware that just sleep and have some refer
 
 int main(int argc, char *argv[])
 {
-char *mypass = "onedrive";
-printf("%d\n", getpid());
+    char *mypass = "onedrive";
+    printf("%d\n", getpid());
 	while(1) { sleep(10); }
 }
 ```
 
-Running pid: 3863, let's trigger this tool to scan for "oned" pattern in all maps sections.
+Running pid: 3863, let's trigger this tool to scan for "oned" pattern in any map sections. 
+
 
 ```
 ./gomemscan  -pid 3863 -fullscan -pattern "\x6f\x6e\x65\x64" -mapperm 0 
+
+or 
+
+./gomemscan  -pid 3863 -fullscan -pattern "oned" -mapperm 0 
+
 ---- [ GoMemScan Ver:  ] ----
 
 {
@@ -122,13 +128,10 @@ onedrive%d
 # Sample Test Demo 
 
 
-## Search in a firefox instance a string in memory and stop after the first chunk match.
-### The string argument will convert each character to \x[HEX] rep to build the same string as required by pattern.
 
-```
-./gomemscan  -fullscan -string cabalango.gob  -pid 0000   -stop-first-match 
-```
+## Search for bytes / strings in a firefox instance stopping after the first chunk match.
 
+![](../doc/rsa.gif)
 
 # Notes
 
