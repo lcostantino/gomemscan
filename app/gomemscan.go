@@ -8,6 +8,7 @@ import (
 	"os"
 	"regexp"
 	"sync"
+	"time"
 
 	"github.com/lcostantino/gomemscan/memscan"
 	"github.com/logrusorgru/aurora"
@@ -32,7 +33,6 @@ type MemScanResult struct {
 
 type GoMemScanArgs struct {
 	pattern             string
-	patternString       string
 	pid                 int
 	bucketLen           uint64
 	startAddress        uint64
@@ -48,6 +48,7 @@ type GoMemScanArgs struct {
 	permMap             int
 	justMatch           bool
 	printOutput         bool
+	totalGoRoutines     int
 }
 
 var au aurora.Aurora
@@ -57,10 +58,9 @@ func parseCommandLineAndValidate() GoMemScanArgs {
 
 	args := GoMemScanArgs{}
 
-	flag.StringVar(&args.pattern, "pattern", "", "(*required if patternString not provided) Bytes Pattern to match Ex: \\x41\\x41 - Warning: a match all pattern will hold all the chunks in memory!")
-	flag.StringVar(&args.patternString, "string", "", "Convert the string to bytes pattern - Use pattern for regex match")
-
+	flag.StringVar(&args.pattern, "pattern", "", "Pattern to match Ex: \\x41\\x41 - Warning: a match all pattern will hold all the chunks in memory!")
 	flag.IntVar(&args.pid, "pid", 0, "(*required) Pid to read memory from")
+	flag.IntVar(&args.totalGoRoutines, "go-routines", 6, "Go routines to use during scanning")
 	flag.Uint64Var(&args.bucketLen, "blen", 1024*1024, "Bucket size where the pattern is applied")
 	flag.Uint64Var(&args.startAddress, "from", 0, "Start address (0x4444444)")
 	flag.Uint64Var(&args.bytesToRead, "length", 1024*1024, "Bytes to read")
@@ -80,14 +80,6 @@ func parseCommandLineAndValidate() GoMemScanArgs {
 	if args.pid == 0 {
 		fmt.Println(au.Red("Error: Target PID is required\n"))
 		os.Exit(1)
-	}
-
-	if args.patternString != "" {
-		//convert to \\byte\\byte etc
-		for _, x := range args.patternString {
-			args.pattern += fmt.Sprintf("\\\\%x", x)
-		}
-
 	}
 
 	if args.pattern == "" {
@@ -120,6 +112,9 @@ func parseCommandLineAndValidate() GoMemScanArgs {
 	if args.justMatch {
 		fmt.Println(au.BrightGreen("Raw data and mem context disabled"))
 		args.includeRawDump = false
+	}
+	if args.verbose {
+		fmt.Println(au.Sprintf(au.BrightYellow("Pattern: %s"), au.White(args.pattern)))
 	}
 	return args
 }
@@ -182,8 +177,9 @@ func main() {
 		}
 		return memscan.ContinueScan
 	}
-
-	scanner.ScanMemory(args.pid, &mRanges, args.bucketLen, memInspect)
+	st := time.Now()
+	scanner.ScanMemory(args.pid, &mRanges, args.bucketLen, memInspect, args.totalGoRoutines)
+	fmt.Println(au.Sprintf(au.BrightYellow("Scan time %d ms"), au.White(time.Since(st).Milliseconds())))
 
 	/* Output results */
 	result := MemScanResult{Bsize: args.bucketLen, Pid: args.pid, ImageName: imageName, cmdLine: cmdLine}

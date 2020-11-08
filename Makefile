@@ -1,6 +1,7 @@
 #Switch to goreleaser in the future :)
 
-VERSION := $(shell git describe --always --long --dirty)
+VERSION := $(shell git describe --always --long) 
+
 PKG := github.com/lcostantino/gomemscan/memscan
 OUT := gomemscan
 TAGS := $(shell git describe --tags)

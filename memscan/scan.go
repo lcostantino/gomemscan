@@ -35,14 +35,14 @@ func (ms *MemReader) GenScanRange(from uint64, length uint64, bsize uint64, name
 }
 
 //Scan a process for the given memory ranges , invoking callback function with cunks of bsize bytes
-func (ms *MemReader) ScanMemory(pid int, mranges *[]MemRange, bsize uint64, callback func(data *[]byte, mrange MemRange, err error) uint8) {
+func (ms *MemReader) ScanMemory(pid int, mranges *[]MemRange, bsize uint64, callback func(data *[]byte, mrange MemRange, err error) uint8, totalGoRoutines int) {
 
-	totalGoRoutines := 6
 	scanWork := func(mRangeChannel chan MemRange, ctx context.Context, resultChan chan uint8) {
 		for {
 			select {
 			case <-ctx.Done(): // Done returns a channel that's closed when work done on behalf of this context is canceled
 				resultChan <- WorkerExit
+
 				return
 			case m, ok := <-mRangeChannel:
 				if !ok {
@@ -52,6 +52,7 @@ func (ms *MemReader) ScanMemory(pid int, mranges *[]MemRange, bsize uint64, call
 				data, err := ms.readMemoryAddress(pid, m)
 				if ret := callback(data, m, err); ret == StopScan {
 					//this is to Cancel without blocking with waitGroup()
+
 					resultChan <- ret
 
 				}
@@ -60,10 +61,12 @@ func (ms *MemReader) ScanMemory(pid int, mranges *[]MemRange, bsize uint64, call
 	}
 
 	//Note: all this mess could be replaced by just wg.Wait() if you don't want to cancel
-	mRangeChannel := make(chan MemRange, totalGoRoutines)
+	//mranges len is needed to avoid a deadlock during the feed due to how i'm waiting here
+	mRangeChannel := make(chan MemRange, len(*mranges))
 	resultChan := make(chan uint8, 1)
 
 	ctx, cancel := context.WithCancel(context.Background())
+
 	for i := 0; i < totalGoRoutines; i++ {
 
 		go scanWork(mRangeChannel, ctx, resultChan)
@@ -75,15 +78,16 @@ func (ms *MemReader) ScanMemory(pid int, mranges *[]MemRange, bsize uint64, call
 
 	close(mRangeChannel)
 	defer close(resultChan)
+
 	for total := totalGoRoutines; total != 0; {
 		select {
-		case v, _ := <-resultChan:
+		case v := <-resultChan:
 			if v == StopScan {
 				cancel()
 			} else if v == WorkerExit {
-
 				total--
 			}
 		}
 	}
+
 }
