@@ -16,6 +16,9 @@ Current implemntation is Linux based only, targeting kernels that support proces
 
 * Only tested 64 bits
 
+## Build
+
+- Just execute make for dev purposes. This project use goreleaser to create the proper artifacts and releases.
 
 ## Usage
 
@@ -131,7 +134,7 @@ onedrive%d
 
 ## Search for bytes / strings in a firefox instance stopping after the first chunk match.
 
-![](../doc/rsa.gif)
+![](/docs/rsa.gif)
 
 # Notes
 
