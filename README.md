@@ -3,74 +3,56 @@
 
 ## Intro
 
-GoMemScan is just a handy tool to excersie Linux VM read syscalls introduced during 2019 plus my GO learning.
+GoMemScan is just a handy tool to scan process memory via Linux VM read syscalls introduced during 2019.
 
-Even if /proc/X/mem is not accessible you may still have the CAPABILITY to read memory via this syscall. (sometimes as user for your own apps or as root)
+Even if /proc/X/mem is not accessible you may still have the CAPABILITY to read memory via this syscall. (as root or user)
 
-The current implementation just look for a byte pattern, but adding Yara for instance would be straighfoward.
-
+The current implementation just looks for a byte pattern, but adding Yara for instance would be straightforward.
 
 ## Limitations
 
-Current implemntation is Linux based only, targeting kernels that support process_vm_readv , but OSX and Windows provides similar capabilities that may be added in the future.
+The current implementation is Linux based only, targeting kernels that support process_vm_readv, but OSX and Windows provide similar capabilities that may be added in the future.
 
-* Only tested 64 bits
+* Only tested on amd64 
 
 ## Build
 
-- Just execute make for dev purposes. This project use goreleaser to create the proper artifacts and releases.
+- This project use [GoReleaser](https://goreleaser.com/) to create proper artifacts and release control.
+- A Makefile is provided just for dev purposes
+
 
 ## Usage
 
 ```
-
-Usage of ./gomemscan:
-  -blen uint
-    	Bucket size where the pattern is applied (default 1048576)
-  -colors
-    	enable or disable colors (default true)
-  -context-bytes int
-    	Bytes to print after and before a match (default 16)
-  -from uint
-    	Start address (0x4444444)
-  -fullscan
-    	Scan all mapped sections
-  -go-routines int
-    	Go routines to use during scanning (default 6)
-  -justmatch
-    	If enabled memory won't be held nor raw data will be availble. Usefully just for initial inspection (match or not)
-  -length uint
-    	Bytes to read (default 1048576)
-  -mapperm int
-    	When scanning mapped sections filter those that match specific permission bit(ex: 4 for read). 0 to ignore it
-  -matches int
-    	Max matches per chunk (default 10)
-  -output string
-    	Output file name. It will be used as prefix for raw output if selected
-  -pattern string
-    	(*required if patternString not provided) Bytes Pattern to match Ex: \x41\x41 - Warning: a match all pattern will hold all the chunks in memory!
-  -pid int
-    	(*required) Pid to read memory from
-  -print-output
-    	Print json output if file not provided (default true)
-  -raw-dump
-    	Generate a file per chunk that matched with binary data of blen size
-  -stop-first-match
-    	Stop after the first chunk match
-  -string string
-    	Convert the string to bytes pattern - Use pattern for regex match
-  -verbose
-    	Verbose
-
+./gomemscan -h
 ```
 
+| Arg        |  Details       | Default  |
+| ------------- |-------------|----------|
+| blen          | Chunk / Bucket size of memory where the patterns is going to search. (Memory will be split based on this size | 1048576 bytes |
+| colors        | Disabled / Enable console colors | True |
+| context-bytes | Bytes to print after/before the match as part of the context. (Ex: pepe in IamThePepeSapoEl with context 2 would output hepepesa )| 16 bytes |
+| from         | Start address to scan if not using full scan | |
+| fullscan     | Scan /proc/pid for maps and scan every readeable section | |
+| go-routines   | Change number of go-routines used while scanning. It's just for playing :) | 16 |
+| justmatch     | If enabled memory won't be kept until results are processed. Usefully for initial inspection when results are not needed| false |
+| length        | Bytes to read: when using from argument for manual scan, this arg would determine the end addr ||
+| mapperm       | When fullscan enabled, it's possible to filter maps based on permissions. Ex: 4 Read, 2: Write, 1: Exec, 0: Any|0|
+| matches       | Maximum number of matches per chunk/bucket. Usually lot of matches will be present for the same string | 10 |
+| output        | Save json results to provided file. If RAW argument is enabled this will be used as prefix for data dump ||\
+| pattern       | Pattern to look for. Syntax is re2 (bytes/string/etc) ||
+| pid           | Target Pid ||
+| print-output  | Dump output to terminal | true |
+| raw-dump      | For each matched chunk/bucket of blen size save it to disk for later analysis||
+| stop-first-match | One 1 ore more matches for the same chunk is found, stop scanning ||
+| verbose       | Enable versbose output | false |
 
 
-* Result will always be 0 if there's at least one match
+* Return code will always be 0 if there's at least one match
 
 ## Sample (test)
 
-In this test sample, there's a dummy malware that just sleep and have some reference to a onedrive folder.
+In this test sample, there's a dummy malware that just sleeps and has some reference to onedrive folder.
 ```
 #include <stdio.h>
 
@@ -120,8 +102,9 @@ or
 
 ```
 
-For every chunk start , end , location (if available) and data with context bytes will output based on passed arguments.
+For every chunk start, end, location (if available), and data with context bytes will output based on passed arguments.
 Inspecting both matches we clearly see:
+
 ```
 > echo AQACAG9uZWRyaXZlACVkCgAAAAABGwM7|base64 -d
 onedrive%d
@@ -132,18 +115,21 @@ onedrive%d
 
 
 
-## Search for bytes / strings in a firefox instance stopping after the first chunk match.
+## Search for bytes / strings in a firefox instance stopping after the first chunk match. (Ex: Cabalango city search and CryptoMiner related wallet number) 
 
 ![](/docs/rsa.gif)
 
 # Notes
 
-When saving context and raw data export be carefully with memory. If there a pattern that will match always it will growth to keep data
-in memory until resuts are processed.
+When saving context and raw data export be careful with memory. If there a pattern that will match always it will grow to keep data
+in memory until results are processed.
+
+The same applies when using a .* regex, since the context is after/before the entire match, so results could be bigger than expected.
 
 There are alternatives like --justMatch to reduce the overhead in case you only want to know if there's a match or not.
 
-Even that coroutines could be expanded actually it would be wise to change bulk length aproppiately since at the end of the day they relly on the syscall read.
+Even that coroutines could be expanded it would be wise to change bulk length appropriately since at the end of the day they rely on the syscall read.
+
 # Todo
 
 1. JS embed to show results
