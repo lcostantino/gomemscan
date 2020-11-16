@@ -18,7 +18,7 @@ const (
 func init() {
 
 	if err := memscan.EnableDebugPrivileges(); err != nil {
-		fmt.Println(au.Sprintf(au.Red("Error: Need debug privileges on windows => %s"), au.BrightBlue(err)))
+		fmt.Printf("Error: Need debug privileges on windows => %s", err)
 		os.Exit(1)
 	}
 
