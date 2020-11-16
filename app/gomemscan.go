@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"runtime"
 	"sync"
 	"time"
 
@@ -27,7 +28,7 @@ type MemScanResult struct {
 	Bsize     uint64
 	Pid       int
 	ImageName string
-	cmdLine   string
+	CmdLine   string
 	Matches   []MemMatchResult //this matches will be modified
 }
 
@@ -49,6 +50,7 @@ type GoMemScanArgs struct {
 	justMatch           bool
 	printOutput         bool
 	totalGoRoutines     int
+	maxResults          int
 }
 
 var au aurora.Aurora
@@ -65,6 +67,7 @@ func parseCommandLineAndValidate() GoMemScanArgs {
 	flag.Uint64Var(&args.startAddress, "from", 0, "Start address (0x4444444)")
 	flag.Uint64Var(&args.bytesToRead, "length", 1024*1024, "Bytes to read")
 	flag.IntVar(&args.maxMatchesPerChunk, "matches", 10, "Max matches per chunk")
+	flag.IntVar(&args.maxResults, "max-results", 30, "Max results per scan")
 	flag.IntVar(&args.contextLength, "context-bytes", 16, "Bytes to print after and before a match")
 	flag.BoolVar(&args.colors, "colors", true, "enable or disable colors")
 	flag.BoolVar(&args.fullScan, "fullscan", false, "Scan all mapped sections")
@@ -96,11 +99,6 @@ func parseCommandLineAndValidate() GoMemScanArgs {
 		os.Exit(1)
 	}
 
-	if _, err := os.Stat(fmt.Sprintf("/proc/%d", args.pid)); err != nil {
-		fmt.Println(au.Sprintf(au.Red("Error: Cannot find PID => %s"), au.BrightBlue(err)))
-		os.Exit(1)
-	}
-
 	if args.bytesToRead < args.bucketLen && args.fullScan == false {
 		args.bucketLen = args.bytesToRead
 	}
@@ -124,12 +122,25 @@ func main() {
 	fmt.Println(au.Sprintf(au.Green("---- [ GoMemScan Ver: %s ] ----\n"), au.BrightGreen(version)))
 	args := parseCommandLineAndValidate()
 
+	if runtime.GOOS == "windows" {
+		if err := memscan.EnableDebugPrivileges(); err != nil {
+			fmt.Println(au.Sprintf(au.Red("Error: Need debug privileges on windows => %s"), au.BrightBlue(err)))
+			os.Exit(1)
+		}
+	}
+
+	process, err := memscan.GetProcess(args.pid)
+	defer process.Close()
+	if process == nil {
+		fmt.Println(au.Sprintf(au.Red("Error: Cannot open process => %s"), au.BrightBlue(err)))
+		os.Exit(1)
+	}
 	var mRanges []memscan.MemRange
 	scanner := new(memscan.MemReader)
 	if args.fullScan {
 		var err error
 
-		mRanges, err = scanner.GetScanRangeForPidMaps(args.pid, uint8(args.permMap), args.bucketLen)
+		mRanges, err = scanner.GetScanRangeForPidMaps(process, uint8(args.permMap), args.bucketLen)
 		if err != nil {
 			fmt.Println(au.Sprintf(au.Red("Error: Cannot read process mmap => %s\n"), au.BrightBlue(err)))
 			os.Exit(1)
@@ -138,13 +149,15 @@ func main() {
 		mRanges = scanner.GenScanRange(args.startAddress, args.bytesToRead, args.bucketLen, "")
 	}
 
-	if len(mRanges) == 0 {
+	if len(mRanges) == 0 && args.startAddress == 0 {
 		fmt.Println(au.Red("Error: Not valid memory ranges to scan\n"))
 		os.Exit(1)
 	}
 
-	imageName := memscan.GetProcessExecPath(args.pid)
-	cmdLine := memscan.GetProcessCmdLine(args.pid)
+	imageName, cmdLine, err := memscan.GetProcessPathAndCmdline(process)
+	if err != nil {
+		fmt.Println(au.Sprintf(au.Red("Error: Cannot read cmdlined/image path: (%s) - Will try to continue\n"), au.BrightBlue(err)))
+	}
 	//From here you can use this as a module, this is the main logic for this cli tool
 	smutex := sync.Mutex{}
 	matches := make([]memscan.MemMatch, 0, args.maxMatchesPerChunk)
@@ -158,11 +171,11 @@ func main() {
 				return memscan.StopScan
 			}
 		}
-
 		if args.verbose {
 			fmt.Println(au.Sprintf(au.BrightYellow("Retrieved memory from: 0x%x to 0x%x"), au.White(location.Start), au.White(location.End)))
 		}
 		if matchPositions := sreg.FindAllIndex(*chunk, args.maxMatchesPerChunk); matchPositions != nil {
+
 			smutex.Lock()
 			defer smutex.Unlock()
 			//Warning: this store all memory regardeless contextLength
@@ -170,6 +183,7 @@ func main() {
 				chunk = nil
 			}
 			matches = append(matches, memscan.MemMatch{Chunk: chunk, Pos: matchPositions, Location: location})
+
 			if args.stopAfterFirstMatch {
 				return memscan.StopScan
 			}
@@ -178,12 +192,12 @@ func main() {
 		return memscan.ContinueScan
 	}
 	st := time.Now()
-	scanner.ScanMemory(args.pid, &mRanges, args.bucketLen, memInspect, args.totalGoRoutines)
+	scanner.ScanMemory(process, &mRanges, args.bucketLen, memInspect, args.totalGoRoutines)
 	fmt.Println(au.Sprintf(au.BrightYellow("Scan time %d ms"), au.White(time.Since(st).Milliseconds())))
 
 	/* Output results */
-	result := MemScanResult{Bsize: args.bucketLen, Pid: args.pid, ImageName: imageName, cmdLine: cmdLine}
-	processOutput(&result, matches, args.includeRawDump, args.outputFile, args.contextLength)
+	result := MemScanResult{Bsize: args.bucketLen, Pid: args.pid, ImageName: imageName, CmdLine: cmdLine}
+	processOutput(&result, matches, args.includeRawDump, args.outputFile, args.contextLength, args.maxResults)
 	resultJson, err := json.MarshalIndent(result, "", "\t")
 	if args.outputFile != "" {
 		if err == nil {
@@ -214,7 +228,7 @@ func saveRawChunk(data *[]byte, outputFile string) {
 		fmt.Println(au.Sprintf(au.Red("Error: failed writing data to file (%s)"), au.BrightBlue(err)))
 	}
 }
-func processOutput(result *MemScanResult, matches []memscan.MemMatch, rawDump bool, outputFile string, contextLength int) {
+func processOutput(result *MemScanResult, matches []memscan.MemMatch, rawDump bool, outputFile string, contextLength, maxResults int) {
 
 	for _, match := range matches {
 
@@ -222,6 +236,11 @@ func processOutput(result *MemScanResult, matches []memscan.MemMatch, rawDump bo
 		if match.Chunk != nil {
 			chunkLength = len(*match.Chunk)
 		}
+		maxResults--
+		if chunkLength == 0 || maxResults < 0 {
+			continue
+		}
+
 		if rawDump {
 			saveRawChunk(match.Chunk, fmt.Sprintf("%s_start_%x_end_%x.raw", outputFile, match.Location.Start, match.Location.Start))
 		}
@@ -235,11 +254,11 @@ func processOutput(result *MemScanResult, matches []memscan.MemMatch, rawDump bo
 			if epos > chunkLength-1 {
 				epos = chunkLength - 1
 			}
-
 			mtr := MemMatchResult{}
 			//plocation is int, so check if this work with larger chunks..
 			mtr.Location.Start = match.Location.Start + (uint64)(plocation[0])
 			mtr.Location.End = match.Location.Start + (uint64)(plocation[1])
+
 			if match.Chunk != nil {
 				mtr.Chunk = new(([]byte))
 				*mtr.Chunk = (*match.Chunk)[spos:epos]

@@ -90,10 +90,10 @@ func (ms *MemReader) parseMapReader(ior *bufio.Reader, permMap uint8) []MemRange
 
 //returns memory maps from /proc/pid/maps
 // MemRange is just a holder for MAPS will be recreated properly with bsize afterwards
-func (ms *MemReader) readMemoryMapFromProc(pid int, permMap uint8) ([]MemRange, error) {
+func (ms *MemReader) readMemoryMapFromProc(p *MemScanProcess, permMap uint8) ([]MemRange, error) {
 	var fp *os.File
 	var err error
-	if fp, err = os.Open(fmt.Sprintf("/proc/%d/maps", pid)); err != nil {
+	if fp, err = os.Open(fmt.Sprintf("/proc/%d/maps", p.pid)); err != nil {
 		return nil, err
 	}
 	defer fp.Close()
@@ -104,8 +104,8 @@ func (ms *MemReader) readMemoryMapFromProc(pid int, permMap uint8) ([]MemRange, 
 }
 
 //For a given PID returns the memory mapped
-func (ms *MemReader) GetScanRangeForPidMaps(pid int, permMap uint8, bucketLen uint64) ([]MemRange, error) {
-	ranges, err := ms.readMemoryMapFromProc(pid, permMap)
+func (ms *MemReader) GetScanRangeForPidMaps(process *MemScanProcess, permMap uint8, bucketLen uint64) ([]MemRange, error) {
+	ranges, err := ms.readMemoryMapFromProc(process.pid, permMap)
 	if err != nil {
 		return nil, err
 	}
