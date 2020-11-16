@@ -25,3 +25,9 @@ const (
 	ContinueScan
 	StopScan
 )
+
+type MemScanProcess struct {
+	Pid    int
+	Handle uintptr // handle is accessed atomically on Windows
+
+}
