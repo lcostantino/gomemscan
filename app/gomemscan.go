@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"regexp"
-	"runtime"
 	"sync"
 	"time"
 
@@ -121,13 +120,6 @@ func main() {
 	au = aurora.NewAurora(true)
 	fmt.Println(au.Sprintf(au.Green("---- [ GoMemScan Ver: %s ] ----\n"), au.BrightGreen(version)))
 	args := parseCommandLineAndValidate()
-
-	if runtime.GOOS == "windows" {
-		if err := memscan.EnableDebugPrivileges(); err != nil {
-			fmt.Println(au.Sprintf(au.Red("Error: Need debug privileges on windows => %s"), au.BrightBlue(err)))
-			os.Exit(1)
-		}
-	}
 
 	process, err := memscan.GetProcess(args.pid)
 	defer process.Close()

@@ -1,6 +1,8 @@
 package memscan
 
 import (
+	"fmt"
+	"os"
 	"syscall"
 	"unsafe"
 
@@ -13,6 +15,14 @@ const (
 	PROCESS_ALL_ACCESS = syscall.STANDARD_RIGHTS_REQUIRED | syscall.SYNCHRONIZE | 0xfff
 )
 
+func init() {
+
+	if err := memscan.EnableDebugPrivileges(); err != nil {
+		fmt.Println(au.Sprintf(au.Red("Error: Need debug privileges on windows => %s"), au.BrightBlue(err)))
+		os.Exit(1)
+	}
+
+}
 func EnableDebugPrivileges() error {
 	var tk win.Token
 	var luid win.LUID
