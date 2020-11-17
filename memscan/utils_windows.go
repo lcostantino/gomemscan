@@ -1,11 +1,12 @@
 package memscan
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"syscall"
 	"unsafe"
-    "errors"
+
 	"github.com/elastic/go-windows"
 	elas "github.com/elastic/go-windows"
 	win "golang.org/x/sys/windows"
@@ -21,6 +22,7 @@ func init() {
 		os.Exit(1)
 	}
 }
+
 //Enable Debug Privileges required for VM ops
 func EnableDebugPrivileges() error {
 	var tk win.Token
@@ -118,21 +120,21 @@ func GetProcessPathAndCmdline(process *MemScanProcess) (string, string, error) {
 	return pName, cmdLine, nil
 }
 
-//Get a Process with PROCESS_ALL_ACCESS
+//Get a Process with PROCESS_ALL_ACCESS or QUERY_INFORMATION & PROCESS_VM_READ if failed
 func GetProcess(pid int) (*MemScanProcess, error) {
 
 	const flagsOpen = PROCESS_ALL_ACCESS
 	h, e := syscall.OpenProcess(flagsOpen, false, uint32(pid))
 	if e != nil {
 		if errors.Is(e, os.ErrPermission) {
-			h, e = syscall.OpenProcess(win.PROCESS_QUERY_INFORMATION | win.PROCESS_VM_READ, false, uint32(pid))
+			h, e = syscall.OpenProcess(win.PROCESS_QUERY_INFORMATION|win.PROCESS_VM_READ, false, uint32(pid))
 			if e != nil {
 				return nil, e
 			}
 		} else {
 			return nil, e
 		}
-	
+
 	}
 	ps := &MemScanProcess{Pid: pid, Handle: uintptr(h)}
 	return ps, nil
