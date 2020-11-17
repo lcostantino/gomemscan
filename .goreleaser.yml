@@ -19,7 +19,7 @@ builds:
     ldflags:
       -  -s -w -X main.version={{.Version}}-{{.Commit}} -X main.date={{.Date}} 
 
-  - id: "Womdows"
+  - id: "Windows"
     main: ./app/gomemscan.go
     env:
       - CGO_ENABLED=0
