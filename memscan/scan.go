@@ -35,7 +35,7 @@ func (ms *MemReader) GenScanRange(from uint64, length uint64, bsize uint64, name
 }
 
 //Scan a process for the given memory ranges , invoking callback function with cunks of bsize bytes
-func (ms *MemReader) ScanMemory(pid int, mranges *[]MemRange, bsize uint64, callback func(data *[]byte, mrange MemRange, err error) uint8, totalGoRoutines int) {
+func (ms *MemReader) ScanMemory(process *MemScanProcess, mranges *[]MemRange, bsize uint64, callback func(data *[]byte, mrange MemRange, err error) uint8, totalGoRoutines int) {
 
 	scanWork := func(mRangeChannel chan MemRange, ctx context.Context, resultChan chan uint8) {
 		for {
@@ -49,7 +49,7 @@ func (ms *MemReader) ScanMemory(pid int, mranges *[]MemRange, bsize uint64, call
 					resultChan <- WorkerExit
 					return
 				}
-				data, err := ms.readMemoryAddress(pid, m)
+				data, err := ms.readMemoryAddress(process, m)
 				if ret := callback(data, m, err); ret == StopScan {
 					//this is to Cancel without blocking with waitGroup()
 
@@ -68,7 +68,6 @@ func (ms *MemReader) ScanMemory(pid int, mranges *[]MemRange, bsize uint64, call
 	ctx, cancel := context.WithCancel(context.Background())
 
 	for i := 0; i < totalGoRoutines; i++ {
-
 		go scanWork(mRangeChannel, ctx, resultChan)
 	}
 

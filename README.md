@@ -11,9 +11,8 @@ The current implementation just looks for a byte pattern, but adding Yara for in
 
 ## Limitations
 
-The current implementation is Linux based only, targeting kernels that support process_vm_readv, but OSX and Windows provide similar capabilities that may be added in the future.
-
-* Only tested on amd64 
+The current implementation supports Linux & Windows.
+. For Linux: targeting kernels that support process_vm_readv
 
 ## Build
 
@@ -130,7 +129,9 @@ There are alternatives like --justMatch to reduce the overhead in case you only 
 
 Even that coroutines could be expanded it would be wise to change bulk length appropriately since at the end of the day they rely on the syscall read.
 
+If you are looking for a project that includes UI, server and it's more featured check [Kraken](https://github.com/botherder/kraken)
+
 # Todo
 
-1. JS embed to show results
-2. Yara?
+
+1. Yara?

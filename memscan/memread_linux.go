@@ -17,7 +17,7 @@ const (
 )
 
 //Linux Only
-func (ms *MemReader) readMemoryAddress(pid int, m MemRange) (*[]byte, error) {
+func (ms *MemReader) readMemoryAddress(p *MemScanProcess, m MemRange) (*[]byte, error) {
 	srcAddr, dstAddr := new(iovec), new(iovec)
 
 	srcAddr.base = uintptr(m.Start)
@@ -28,7 +28,7 @@ func (ms *MemReader) readMemoryAddress(pid int, m MemRange) (*[]byte, error) {
 	dstAddr.base = uintptr(unsafe.Pointer(&mdata[0]))
 	dstAddr.size = m.bsize
 
-	_, _, e1 := syscall.RawSyscall6(VM_READ_SYSCALL, uintptr(pid), uintptr(unsafe.Pointer(dstAddr)), 1, uintptr(unsafe.Pointer(srcAddr)), 1, 0)
+	_, _, e1 := syscall.RawSyscall6(VM_READ_SYSCALL, uintptr(p.Pid), uintptr(unsafe.Pointer(dstAddr)), 1, uintptr(unsafe.Pointer(srcAddr)), 1, 0)
 	var err error
 	if e1 != 0 {
 		err = e1
@@ -90,10 +90,10 @@ func (ms *MemReader) parseMapReader(ior *bufio.Reader, permMap uint8) []MemRange
 
 //returns memory maps from /proc/pid/maps
 // MemRange is just a holder for MAPS will be recreated properly with bsize afterwards
-func (ms *MemReader) readMemoryMapFromProc(pid int, permMap uint8) ([]MemRange, error) {
+func (ms *MemReader) readMemoryMapFromProc(p *MemScanProcess, permMap uint8) ([]MemRange, error) {
 	var fp *os.File
 	var err error
-	if fp, err = os.Open(fmt.Sprintf("/proc/%d/maps", pid)); err != nil {
+	if fp, err = os.Open(fmt.Sprintf("/proc/%d/maps", p.Pid)); err != nil {
 		return nil, err
 	}
 	defer fp.Close()
@@ -104,8 +104,8 @@ func (ms *MemReader) readMemoryMapFromProc(pid int, permMap uint8) ([]MemRange, 
 }
 
 //For a given PID returns the memory mapped
-func (ms *MemReader) GetScanRangeForPidMaps(pid int, permMap uint8, bucketLen uint64) ([]MemRange, error) {
-	ranges, err := ms.readMemoryMapFromProc(pid, permMap)
+func (ms *MemReader) GetScanRangeForPidMaps(p *MemScanProcess, permMap uint8, bucketLen uint64) ([]MemRange, error) {
+	ranges, err := ms.readMemoryMapFromProc(p, permMap)
 	if err != nil {
 		return nil, err
 	}
