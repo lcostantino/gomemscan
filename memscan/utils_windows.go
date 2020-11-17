@@ -5,7 +5,7 @@ import (
 	"os"
 	"syscall"
 	"unsafe"
-
+    "errors"
 	"github.com/elastic/go-windows"
 	elas "github.com/elastic/go-windows"
 	win "golang.org/x/sys/windows"
@@ -16,13 +16,12 @@ const (
 )
 
 func init() {
-
-	if err := memscan.EnableDebugPrivileges(); err != nil {
+	if err := EnableDebugPrivileges(); err != nil {
 		fmt.Printf("Error: Need debug privileges on windows => %s", err)
 		os.Exit(1)
 	}
-
 }
+//Enable Debug Privileges required for VM ops
 func EnableDebugPrivileges() error {
 	var tk win.Token
 	var luid win.LUID
@@ -91,20 +90,16 @@ func GetProcessPathAndCmdline(process *MemScanProcess) (string, string, error) {
 
 	var info windows.ProcessBasicInformationStruct
 	infoLen := uint32(unsafe.Sizeof(info))
-
 	if _, err := elas.NtQueryInformationProcess(syscall.Handle(process.Handle), infoClass, unsafe.Pointer(&info), infoLen); err != nil {
 		return "", "", err
 	}
-
 	asBytes := make([]byte, windows.SizeOfRtlUserProcessParameters)
 
 	var offset uint = 0x20
-
 	//Read ProcessParameters
 	//TODO: create a proper PebBase structure to avoid this offset if possible
 	rdata, err := windows.ReadProcessMemory(syscall.Handle(process.Handle), info.PebBaseAddress, asBytes)
 	//TODO: 32 bits if needed. Wow64 should work
-
 	//Get PEB process address field to read the struct
 	processParametersAddress := getAddress(&asBytes, offset, 8)
 
@@ -114,7 +109,6 @@ func GetProcessPathAndCmdline(process *MemScanProcess) (string, string, error) {
 	}
 
 	pName, cmdLine := "", ""
-
 	if rdata == windows.SizeOfRtlUserProcessParameters {
 		var upp windows.RtlUserProcessParameters
 		if pName, err = readUnicodeStruct(process, &asBytes, unsafe.Offsetof(upp.ImagePathName), 8); err == nil {
@@ -124,18 +118,27 @@ func GetProcessPathAndCmdline(process *MemScanProcess) (string, string, error) {
 	return pName, cmdLine, nil
 }
 
-//same as FindProcess with different flags
+//Get a Process with PROCESS_ALL_ACCESS
 func GetProcess(pid int) (*MemScanProcess, error) {
 
 	const flagsOpen = PROCESS_ALL_ACCESS
 	h, e := syscall.OpenProcess(flagsOpen, false, uint32(pid))
 	if e != nil {
-		return nil, e
+		if errors.Is(e, os.ErrPermission) {
+			h, e = syscall.OpenProcess(win.PROCESS_QUERY_INFORMATION | win.PROCESS_VM_READ, false, uint32(pid))
+			if e != nil {
+				return nil, e
+			}
+		} else {
+			return nil, e
+		}
+	
 	}
 	ps := &MemScanProcess{Pid: pid, Handle: uintptr(h)}
 	return ps, nil
 }
 
+//Just close a handle
 func (p *MemScanProcess) Close() {
 	win.CloseHandle(win.Handle(p.Handle))
 }
