@@ -1,0 +1,108 @@
+# This is an example goreleaser.yaml file with some sane defaults.
+# Make sure to check the documentation at http://goreleaser.com
+before:
+  hooks:
+    # You may remove this if you don't use go modules.
+    - go mod download
+    # you may remove this if you don't need go generate
+    - go generate ./...
+
+builds:
+ 
+  - id: "Linux"
+    dir: app
+
+    env:
+      - CGO_ENABLED=0
+      
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      -  -s -w -X main.version={{.Version}}-{{.Commit}} -X main.date={{.Date}} -extldflags=-static
+
+       
+  - id: "Linux-Yara"
+    dir: app
+
+    env:
+      - CGO_ENABLED=1
+      - PKG_CONFIG_PATH=/usr/local/lib/pkgconfig/ 
+      - CGO_LDFLAGS=-static -L/usr/local/lib -lyara -lcrypto -ldl -pthread -lm
+    goos:
+      - linux
+      
+    goarch:
+      - amd64
+
+    binary: gomemscan-yara
+    flags:
+      - -tags=yara
+    ldflags:
+      -  -s -w -X main.version={{.Version}}-{{.Commit}} -X main.date={{.Date}} -extldflags=-static
+
+  - id: "Linux-Arm64-Yara"
+    dir: app
+
+    env:
+      - CGO_ENABLED=1
+      - CGO_LDFLAGS=-static -L/usr/local/lib/armx64/lib/ -lyara -lm
+      - CC=aarch64-linux-gnu-gcc
+      - PKG_CONFIG_PATH=/usr/local/lib/armx64/lib/pkgconfig/
+    goos:
+      - linux
+      
+    goarch:
+      - arm64
+
+    binary: gomemscan-yara
+    flags:
+      - -tags=yara
+    ldflags:
+      -  -s -w -X main.version={{.Version}}-{{.Commit}} -X main.date={{.Date}} -extldflags=-static
+
+
+  - id: "Windows-Yara"
+    dir: app
+    env:
+      - CGO_LDFLAGS=
+      - CGO_ENABLED=1
+      - CC=x86_64-w64-mingw32-gcc
+      - PKG_CONFIG_PATH=/usr/local/lib/winx64/lib/pkgconfig/
+
+    goos:      
+      - windows
+    goarch:
+      - amd64
+    binary: gomemscan-yara
+    flags:
+      - -tags=yara
+    ldflags:
+      -  -s -w -X main.version={{.Version}}-{{.Commit}} -X main.date={{.Date}} 
+
+  - id: "Windows"
+    dir: app
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - windows
+    goarch:
+      - amd64
+    ldflags:
+      -  -s -w -X main.version={{.Version}}-{{.Commit}} -X main.date={{.Date}} 
+archives:
+  - replacements:
+      linux: Linux
+      amd64: x86_64
+checksum:
+  name_template: 'checksums.txt'
+snapshot:
+  name_template: "{{ .Tag }}-next"
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'

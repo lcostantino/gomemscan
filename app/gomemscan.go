@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"regexp"
-	"sync"
 	"time"
 
 	"github.com/lcostantino/gomemscan/memscan"
@@ -28,6 +27,7 @@ type MemScanResult struct {
 	Pid       int
 	ImageName string
 	CmdLine   string
+	Engine    string
 	Matches   []MemMatchResult //this matches will be modified
 }
 
@@ -50,6 +50,11 @@ type GoMemScanArgs struct {
 	printOutput         bool
 	totalGoRoutines     int
 	maxResults          int
+	yaraFile            string
+}
+
+func init() {
+	SupportedModes = make(map[string]MemScanner)
 }
 
 var au aurora.Aurora
@@ -60,6 +65,7 @@ func parseCommandLineAndValidate() GoMemScanArgs {
 	args := GoMemScanArgs{}
 
 	flag.StringVar(&args.pattern, "pattern", "", "Pattern to match Ex: \\x41\\x41 - Warning: a match all pattern will hold all the chunks in memory!")
+	flag.StringVar(&args.yaraFile, "yara-file", "", "Use a yara rule for matching instead (Only if built with yara support)")
 	flag.IntVar(&args.pid, "pid", 0, "(*required) Pid to read memory from")
 	flag.IntVar(&args.totalGoRoutines, "go-routines", 6, "Go routines to use during scanning")
 	flag.Uint64Var(&args.bucketLen, "blen", 1024*1024, "Bucket size where the pattern is applied")
@@ -84,15 +90,16 @@ func parseCommandLineAndValidate() GoMemScanArgs {
 		os.Exit(1)
 	}
 
-	if args.pattern == "" {
-		fmt.Println(au.Red("Error: Missing Scan Pattern\n"))
+	if args.pattern == "" && args.yaraFile == "" || args.pattern != "" && args.yaraFile != "" {
+		fmt.Println(au.Red("Error: You need to provide either Scan Pattern or Yara rule\n"))
 		os.Exit(1)
 	}
 
 	if args.includeRawDump && args.outputFile == "" {
-		fmt.Println(au.Red("Error: Provider an output file name to also generate raw dumps"))
+		fmt.Println(au.Red("Error: Provide an output file name to also generate raw dumps"))
 		os.Exit(1)
 	}
+
 	if _, err := regexp.Compile(args.pattern); err != nil {
 		fmt.Println(au.Sprintf(au.Red("Error: Invalid Pattern => %s"), au.BrightBlue(err)))
 		os.Exit(1)
@@ -116,6 +123,8 @@ func parseCommandLineAndValidate() GoMemScanArgs {
 	return args
 }
 
+var SupportedModes map[string]MemScanner
+
 func main() {
 	au = aurora.NewAurora(true)
 	fmt.Println(au.Sprintf(au.Green("---- [ GoMemScan Ver: %s ] ----\n"), au.BrightGreen(version)))
@@ -128,10 +137,10 @@ func main() {
 		os.Exit(1)
 	}
 	var mRanges []memscan.MemRange
+	engine := ""
 	scanner := new(memscan.MemReader)
 	if args.fullScan {
 		var err error
-
 		mRanges, err = scanner.GetScanRangeForPidMaps(process, uint8(args.permMap), args.bucketLen)
 		if err != nil {
 			fmt.Println(au.Sprintf(au.Red("Error: Cannot read process mmap => %s\n"), au.BrightBlue(err)))
@@ -150,12 +159,40 @@ func main() {
 	if err != nil {
 		fmt.Println(au.Sprintf(au.Red("Error: Cannot read cmdlined/image path: (%s) - Will try to continue\n"), au.BrightBlue(err)))
 	}
-	//From here you can use this as a module, this is the main logic for this cli tool
-	smutex := sync.Mutex{}
-	matches := make([]memscan.MemMatch, 0, args.maxMatchesPerChunk)
 
-	sreg := regexp.MustCompile(args.pattern)
-	memInspect := func(chunk *[]byte, location memscan.MemRange, err error) uint8 {
+	var matches []memscan.MemMatch
+	var scannerMatch MemScanner
+
+	if args.pattern != "" {
+		engine = RE_SCANNER_NAME
+		scannerMatch, _ = SupportedModes[RE_SCANNER_NAME]
+
+		scannerMatch.Init(map[string]interface{}{"pattern": args.pattern, "maxMatchesPerChunk": args.maxMatchesPerChunk, "justMatch": args.justMatch})
+	} else if args.yaraFile != "" {
+		engine = "yara"
+		var ok bool
+		scannerMatch, ok = SupportedModes[engine]
+		if !ok {
+			fmt.Println(au.Red("Error: YARA support not enabled\n"))
+			os.Exit(1)
+		}
+		if err := scannerMatch.Init(map[string]interface{}{
+			"yaraFile":           args.yaraFile,
+			"maxMatchesPerChunk": args.maxMatchesPerChunk,
+			"justMatch":          args.justMatch,
+			"totalGoRoutines":    args.totalGoRoutines}); err != nil {
+
+			fmt.Println(au.Sprintf(au.Red("Error: YARA initialization failed : %s\n"), au.BrightBlue(err)))
+			os.Exit(1)
+		}
+	}
+
+	if scannerMatch == nil {
+		fmt.Println(au.Sprintf(au.Red("Not valid match engine selected - Available modes: %v\n"), au.BrightBlue(SupportedModes)))
+		os.Exit(1)
+	}
+	//else yara
+	memInspect := func(chunk *[]byte, location memscan.MemRange, err error, workerNum int) uint8 {
 		// Here it will be possible to cancel the execution of next matches if needed
 		if err != nil {
 			fmt.Println(au.Sprintf(au.Red("-> Error scanning address at 0x%x (%s)"), au.BrightBlue(location.Start), au.BrightBlue(err)))
@@ -166,16 +203,8 @@ func main() {
 		if args.verbose {
 			fmt.Println(au.Sprintf(au.BrightYellow("Retrieved memory from: 0x%x to 0x%x"), au.White(location.Start), au.White(location.End)))
 		}
-		if matchPositions := sreg.FindAllIndex(*chunk, args.maxMatchesPerChunk); matchPositions != nil {
 
-			smutex.Lock()
-			defer smutex.Unlock()
-			//Warning: this store all memory regardeless contextLength
-			if args.justMatch {
-				chunk = nil
-			}
-			matches = append(matches, memscan.MemMatch{Chunk: chunk, Pos: matchPositions, Location: location})
-
+		if scannerMatch.Match(chunk, location, workerNum) {
 			if args.stopAfterFirstMatch {
 				return memscan.StopScan
 			}
@@ -186,9 +215,9 @@ func main() {
 	st := time.Now()
 	scanner.ScanMemory(process, &mRanges, args.bucketLen, memInspect, args.totalGoRoutines)
 	fmt.Println(au.Sprintf(au.BrightYellow("Scan time %d ms"), au.White(time.Since(st).Milliseconds())))
-
+	matches = scannerMatch.GetMatches()
 	/* Output results */
-	result := MemScanResult{Bsize: args.bucketLen, Pid: args.pid, ImageName: imageName, CmdLine: cmdLine}
+	result := MemScanResult{Bsize: args.bucketLen, Pid: args.pid, ImageName: imageName, CmdLine: cmdLine, Engine: engine}
 	processOutput(&result, matches, args.includeRawDump, args.outputFile, args.contextLength, args.maxResults)
 	resultJson, err := json.MarshalIndent(result, "", "\t")
 	if args.outputFile != "" {

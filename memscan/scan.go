@@ -35,9 +35,9 @@ func (ms *MemReader) GenScanRange(from uint64, length uint64, bsize uint64, name
 }
 
 //Scan a process for the given memory ranges , invoking callback function with cunks of bsize bytes
-func (ms *MemReader) ScanMemory(process *MemScanProcess, mranges *[]MemRange, bsize uint64, callback func(data *[]byte, mrange MemRange, err error) uint8, totalGoRoutines int) {
+func (ms *MemReader) ScanMemory(process *MemScanProcess, mranges *[]MemRange, bsize uint64, callback func(data *[]byte, mrange MemRange, err error, workerNum int) uint8, totalGoRoutines int) {
 
-	scanWork := func(mRangeChannel chan MemRange, ctx context.Context, resultChan chan uint8) {
+	scanWork := func(mRangeChannel chan MemRange, ctx context.Context, resultChan chan uint8, workerNum int) {
 		for {
 			select {
 			case <-ctx.Done(): // Done returns a channel that's closed when work done on behalf of this context is canceled
@@ -50,7 +50,7 @@ func (ms *MemReader) ScanMemory(process *MemScanProcess, mranges *[]MemRange, bs
 					return
 				}
 				data, err := ms.readMemoryAddress(process, m)
-				if ret := callback(data, m, err); ret == StopScan {
+				if ret := callback(data, m, err, workerNum); ret == StopScan {
 					//this is to Cancel without blocking with waitGroup()
 
 					resultChan <- ret
@@ -68,7 +68,7 @@ func (ms *MemReader) ScanMemory(process *MemScanProcess, mranges *[]MemRange, bs
 	ctx, cancel := context.WithCancel(context.Background())
 
 	for i := 0; i < totalGoRoutines; i++ {
-		go scanWork(mRangeChannel, ctx, resultChan)
+		go scanWork(mRangeChannel, ctx, resultChan, i)
 	}
 
 	for _, mRange := range *mranges {
