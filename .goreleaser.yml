@@ -22,7 +22,6 @@ builds:
       -  -s -w -X main.version={{.Version}}-{{.Commit}} -X main.date={{.Date}} -extldflags=-static
 
   - id: "Windows"
-    
     dir: app
     env:
       - CGO_ENABLED=0
