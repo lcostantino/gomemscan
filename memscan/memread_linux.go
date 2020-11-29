@@ -6,15 +6,19 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"runtime"
 	"syscall"
 	"unsafe"
 )
 
 const (
-	VM_READ_SYSCALL = 310
-	IGNORE_PERM     = "---p"
-	IGNORE_NAME     = "[vvar]"
+	VM_READ_SYSCALL         = 310
+	VM_READ_SYSCALL_AARCH64 = 270
+	IGNORE_PERM             = "---p"
+	IGNORE_NAME             = "[vvar]"
 )
+
+var ARCH_PLATFORM_SYSCALL int = VM_READ_SYSCALL
 
 //Linux Only
 func (ms *MemReader) readMemoryAddress(p *MemScanProcess, m MemRange) (*[]byte, error) {
@@ -28,7 +32,7 @@ func (ms *MemReader) readMemoryAddress(p *MemScanProcess, m MemRange) (*[]byte, 
 	dstAddr.base = uintptr(unsafe.Pointer(&mdata[0]))
 	dstAddr.size = m.bsize
 
-	_, _, e1 := syscall.RawSyscall6(VM_READ_SYSCALL, uintptr(p.Pid), uintptr(unsafe.Pointer(dstAddr)), 1, uintptr(unsafe.Pointer(srcAddr)), 1, 0)
+	_, _, e1 := syscall.RawSyscall6(uintptr(ARCH_PLATFORM_SYSCALL), uintptr(p.Pid), uintptr(unsafe.Pointer(dstAddr)), 1, uintptr(unsafe.Pointer(srcAddr)), 1, 0)
 	var err error
 	if e1 != 0 {
 		err = e1
@@ -116,4 +120,10 @@ func (ms *MemReader) GetScanRangeForPidMaps(p *MemScanProcess, permMap uint8, bu
 	}
 	return scanRanges, nil
 
+}
+
+func init() {
+	if runtime.GOARCH == "arm64" {
+		ARCH_PLATFORM_SYSCALL = VM_READ_SYSCALL_AARCH64
+	}
 }

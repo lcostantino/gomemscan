@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"strings"
 )
 
 func GetProcessPathAndCmdline(process *MemScanProcess) (string, string, error) {
@@ -13,6 +14,7 @@ func GetProcessPathAndCmdline(process *MemScanProcess) (string, string, error) {
 
 		if bt, err := ioutil.ReadFile(fmt.Sprintf("/proc/%d/cmdline", process.Pid)); err == nil {
 			cmdLine = string(bt)
+			cmdLine = strings.ReplaceAll(cmdLine, string([]byte{0x00}), "")
 		}
 	}
 	return name, cmdLine, err
