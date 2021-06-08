@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -29,4 +30,21 @@ func GetProcess(pid int) (*MemScanProcess, error) {
 	return ps, nil
 }
 
+func GetProcessPidToScan(pid int, allPids bool) ([]int, error) {
+	if allPids == false {
+		return []int{pid}, nil
+	}
+	var pidsList []int
+	me := os.Getpid()
+	if oFileInfo, err := ioutil.ReadDir("/proc"); err != nil {
+		return pidsList, err
+	} else {
+		for _, ff := range oFileInfo {
+			if numericPid, err := strconv.Atoi(ff.Name()); err == nil && numericPid > 1 && numericPid != me {
+				pidsList = append(pidsList, numericPid)
+			}
+		}
+	}
+	return pidsList, nil
+}
 func (p *MemScanProcess) Close() {}

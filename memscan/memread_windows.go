@@ -11,8 +11,9 @@ import (
 )
 
 const (
-	IGNORE_PERM = "---p"
-	IGNORE_NAME = "[vvar]"
+	IGNORE_PERM  = "---p"
+	IGNORE_NAME  = "[vvar]"
+	PARTIAL_READ = 299
 )
 
 func (ms *MemReader) readMemoryAddress(p *MemScanProcess, m MemRange) (*[]byte, error) {
@@ -24,6 +25,12 @@ func (ms *MemReader) readMemoryAddress(p *MemScanProcess, m MemRange) (*[]byte, 
 	if nread < readSize {
 		data = data[0:nread]
 	}
+	if interr, ok := err.(syscall.Errno); ok {
+		if interr == PARTIAL_READ {
+			err = nil
+		}
+	}
+
 	return &data, err
 }
 
