@@ -145,7 +145,6 @@ func initiPidScan(pid int, args GoMemScanArgs, scannerMatch MemScanner) (MemScan
 		fmt.Println(au.Sprintf(au.Red("Error: Cannot read cmdlined/image path: (%s) - Will try to continue\n"), au.BrightBlue(err)))
 	}
 	var mRanges []memscan.MemRange
-
 	scanner := new(memscan.MemReader)
 	if args.fullScan {
 		var err error
@@ -161,7 +160,6 @@ func initiPidScan(pid int, args GoMemScanArgs, scannerMatch MemScanner) (MemScan
 		return MemScanResult{Pid: pid, ImageName: imageName, CmdLine: cmdLine}, nil, errors.New(au.Sprintf("%s", au.Red("Error: Not valid memory ranges to scan\n")))
 	}
 
-	//else yara
 	memInspect := func(chunk *[]byte, location memscan.MemRange, err error, workerNum int) uint8 {
 		// Here it will be possible to cancel the execution of next matches if needed
 		if err != nil {
@@ -192,14 +190,12 @@ func initiPidScan(pid int, args GoMemScanArgs, scannerMatch MemScanner) (MemScan
 func saveRawChunk(data *[][]byte, outputFile string) {
 
 	f, err := os.OpenFile(outputFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0755)
-
 	if err != nil {
 		fmt.Println(au.Sprintf(au.Red("Error: cannot save raw data to file %s (%s)"), au.BrightBlue(outputFile), au.BrightBlue(err)))
 		return
 	}
 	defer f.Close()
 	pLen := len(*data)
-
 	/* It's manual to avoid holding the entire struct, a iowriter or buffer may be better suited to implement this logic*/
 	extraChar := ","
 	f.Write([]byte("["))
@@ -215,9 +211,7 @@ func saveRawChunk(data *[][]byte, outputFile string) {
 	f.Write([]byte("]"))
 }
 func processOutput(result *MemScanResult, matches []memscan.MemMatch, rawDump bool, outputFile string, contextLength, maxResults int) {
-
 	for _, match := range matches {
-
 		chunkLength := 0
 		if match.Chunk != nil {
 			chunkLength = len(*match.Chunk)
@@ -226,14 +220,12 @@ func processOutput(result *MemScanResult, matches []memscan.MemMatch, rawDump bo
 		if chunkLength == 0 || maxResults < 0 {
 			continue
 		}
-
 		if rawDump {
 			rData := make([][]byte, 1, 1)
 			rData[0] = *match.Chunk
 			saveRawChunk(&rData, fmt.Sprintf("%s_start_%x_end_%x.raw", outputFile, match.Location.Start, match.Location.Start))
 		}
 		for _, plocation := range match.Pos {
-
 			spos := plocation[0] - contextLength
 			if spos < 0 {
 				spos = 0
@@ -246,18 +238,14 @@ func processOutput(result *MemScanResult, matches []memscan.MemMatch, rawDump bo
 			//plocation is int, so check if this work with larger chunks..
 			mtr.Location.Start = match.Location.Start + (uint64)(plocation[0])
 			mtr.Location.End = match.Location.Start + (uint64)(plocation[1])
-
 			if match.Chunk != nil {
 				mtr.Chunk = new(([]byte))
 				*mtr.Chunk = (*match.Chunk)[spos:epos]
 			}
 			mtr.Name = match.Location.Name
 			result.Matches = append(result.Matches, mtr)
-
 		}
-
 	}
-
 }
 
 func main() {
@@ -296,18 +284,14 @@ func main() {
 		fmt.Println(au.Sprintf(au.Red("Not valid match engine selected - Available modes: %v\n"), au.BrightBlue(SupportedModes)))
 		os.Exit(1)
 	}
-
 	st := time.Now()
-
 	atLeastOneMatch := false
-	// Engine: engine}
 	var jsonResults [][]byte
 	allPids, err := memscan.GetProcessPidToScan(args.pid, args.allPids)
 	if err != nil {
 		fmt.Println(au.Sprintf(au.Red("Couldnt get processes id: %v\n"), au.BrightBlue(err)))
 		os.Exit(1)
 	}
-
 	for _, pid := range allPids {
 		result, matches, err := initiPidScan(pid, args, scannerMatch)
 		if err != nil {
@@ -334,9 +318,7 @@ func main() {
 		}
 		jsonResults = append(jsonResults, rJson)
 	}
-
 	fmt.Println(au.Sprintf(au.BrightYellow("Scan time %d ms"), au.White(time.Since(st).Milliseconds())))
-
 	if args.outputFile != "" {
 		saveRawChunk(&jsonResults, args.outputFile)
 	} else if args.printOutput {
