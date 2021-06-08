@@ -164,7 +164,6 @@ func GetProcessPidToScan(pid int, allPids bool) ([]int, error) {
 				break
 			}
 		}
-
 	}
 	return pidsList, nil
 }
