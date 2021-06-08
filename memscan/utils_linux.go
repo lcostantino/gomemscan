@@ -44,7 +44,6 @@ func GetProcessPidToScan(pid int, allPids bool) ([]int, error) {
 				pidsList = append(pidsList, numericPid)
 			}
 		}
-
 	}
 	return pidsList, nil
 }
