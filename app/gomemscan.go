@@ -28,6 +28,7 @@ type MemScanResult struct {
 	ImageName string
 	CmdLine   string
 	Engine    string
+	Error     bool
 	Matches   []MemMatchResult //this matches will be modified
 }
 
@@ -51,6 +52,7 @@ type GoMemScanArgs struct {
 	totalGoRoutines     int
 	maxResults          int
 	yaraFile            string
+	allPids             bool
 }
 
 func init() {
@@ -83,9 +85,10 @@ func parseCommandLineAndValidate() GoMemScanArgs {
 	flag.StringVar(&args.outputFile, "output", "", "Output file name. It will be used as prefix for raw output if selected")
 	flag.BoolVar(&args.justMatch, "justmatch", false, "If enabled memory won't be held nor raw data will be availble. Usefully just for initial inspection (match or not)")
 	flag.BoolVar(&args.printOutput, "print-output", true, "Print json output if file not provided")
+	flag.BoolVar(&args.allPids, "all-pids", false, "Scan all pids")
 	flag.Parse()
 
-	if args.pid == 0 {
+	if args.pid == 0 && args.allPids == false {
 		fmt.Println(au.Red("Error: Target PID is required\n"))
 		os.Exit(1)
 	}
@@ -125,44 +128,146 @@ func parseCommandLineAndValidate() GoMemScanArgs {
 
 var SupportedModes map[string]MemScanner
 
-func main() {
-	au = aurora.NewAurora(true)
-	fmt.Println(au.Sprintf(au.Green("---- [ GoMemScan Ver: %s ] ----\n"), au.BrightGreen(version)))
-	args := parseCommandLineAndValidate()
+func initiPidScan(pid int, args GoMemScanArgs, scannerMatch MemScanner) (MemScanResult, *[]memscan.MemMatch, error) {
 
-	process, err := memscan.GetProcess(args.pid)
-	defer process.Close()
+	process, err := memscan.GetProcess(pid)
+
 	if process == nil {
-		fmt.Println(au.Sprintf(au.Red("Error: Cannot open process => %s"), au.BrightBlue(err)))
-		os.Exit(1)
+		return MemScanResult{Pid: pid}, nil, errors.New(au.Sprintf(au.Red("Error: Cannot open process => %s"), au.BrightBlue(err)))
+	}
+	defer process.Close()
+	imageName, cmdLine, err := memscan.GetProcessPathAndCmdline(process)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			//It may be a kernel process or non existent anymore, just ignore it
+			return MemScanResult{Pid: 0}, nil, nil
+		}
+		fmt.Println(au.Sprintf(au.Red("Error: Cannot read cmdlined/image path: (%s) - Will try to continue\n"), au.BrightBlue(err)))
 	}
 	var mRanges []memscan.MemRange
-	engine := ""
+
 	scanner := new(memscan.MemReader)
 	if args.fullScan {
 		var err error
 		mRanges, err = scanner.GetScanRangeForPidMaps(process, uint8(args.permMap), args.bucketLen)
 		if err != nil {
-			fmt.Println(au.Sprintf(au.Red("Error: Cannot read process mmap => %s\n"), au.BrightBlue(err)))
-			os.Exit(1)
+			return MemScanResult{Pid: args.pid, ImageName: imageName, CmdLine: cmdLine}, nil, errors.New(au.Sprintf(au.Red("Error: Cannot read process mmap => %s\n"), au.BrightBlue(err)))
 		}
 	} else {
 		mRanges = scanner.GenScanRange(args.startAddress, args.bytesToRead, args.bucketLen, "")
 	}
 
 	if len(mRanges) == 0 && args.startAddress == 0 {
-		fmt.Println(au.Red("Error: Not valid memory ranges to scan\n"))
-		os.Exit(1)
+		return MemScanResult{Pid: pid, ImageName: imageName, CmdLine: cmdLine}, nil, errors.New(au.Sprintf("%s", au.Red("Error: Not valid memory ranges to scan\n")))
 	}
 
-	imageName, cmdLine, err := memscan.GetProcessPathAndCmdline(process)
+	//else yara
+	memInspect := func(chunk *[]byte, location memscan.MemRange, err error, workerNum int) uint8 {
+		// Here it will be possible to cancel the execution of next matches if needed
+		if err != nil {
+			fmt.Println(au.Sprintf(au.Red("-> Error scanning address at 0x%x (%s)"), au.BrightBlue(location.Start), au.BrightBlue(err)))
+			if errors.Is(err, os.ErrNotExist) {
+				return memscan.StopScan
+			}
+		}
+		if args.verbose {
+			fmt.Println(au.Sprintf(au.BrightYellow("Retrieved memory from: 0x%x to 0x%x"), au.White(location.Start), au.White(location.End)))
+		}
+
+		if scannerMatch.Match(chunk, location, workerNum) {
+			if args.stopAfterFirstMatch {
+				return memscan.StopScan
+			}
+
+		}
+		return memscan.ContinueScan
+	}
+	scanner.ScanMemory(process, &mRanges, args.bucketLen, memInspect, args.totalGoRoutines)
+	/* Output results */
+	matches := scannerMatch.GetMatches()
+	return MemScanResult{Bsize: args.bucketLen, Pid: pid, ImageName: imageName, CmdLine: cmdLine}, &matches, nil
+
+}
+
+func saveRawChunk(data *[][]byte, outputFile string) {
+
+	f, err := os.OpenFile(outputFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0755)
+
 	if err != nil {
-		fmt.Println(au.Sprintf(au.Red("Error: Cannot read cmdlined/image path: (%s) - Will try to continue\n"), au.BrightBlue(err)))
+		fmt.Println(au.Sprintf(au.Red("Error: cannot save raw data to file %s (%s)"), au.BrightBlue(outputFile), au.BrightBlue(err)))
+		return
+	}
+	defer f.Close()
+	pLen := len(*data)
+
+	/* It's manual to avoid holding the entire struct, a iowriter or buffer may be better suited to implement this logic*/
+	extraChar := ","
+	f.Write([]byte("["))
+	for idx, bData := range *data {
+		if idx+1 == pLen {
+			extraChar = ""
+		}
+		if _, err := f.Write(bData); err != nil {
+			fmt.Println(au.Sprintf(au.Red("Error: failed writing data to file (%s)"), au.BrightBlue(err)))
+		}
+		f.Write([]byte(extraChar))
+	}
+	f.Write([]byte("]"))
+}
+func processOutput(result *MemScanResult, matches []memscan.MemMatch, rawDump bool, outputFile string, contextLength, maxResults int) {
+
+	for _, match := range matches {
+
+		chunkLength := 0
+		if match.Chunk != nil {
+			chunkLength = len(*match.Chunk)
+		}
+		maxResults--
+		if chunkLength == 0 || maxResults < 0 {
+			continue
+		}
+
+		if rawDump {
+			rData := make([][]byte, 1, 1)
+			rData[0] = *match.Chunk
+			saveRawChunk(&rData, fmt.Sprintf("%s_start_%x_end_%x.raw", outputFile, match.Location.Start, match.Location.Start))
+		}
+		for _, plocation := range match.Pos {
+
+			spos := plocation[0] - contextLength
+			if spos < 0 {
+				spos = 0
+			}
+			epos := plocation[1] + contextLength
+			if epos > chunkLength-1 {
+				epos = chunkLength - 1
+			}
+			mtr := MemMatchResult{}
+			//plocation is int, so check if this work with larger chunks..
+			mtr.Location.Start = match.Location.Start + (uint64)(plocation[0])
+			mtr.Location.End = match.Location.Start + (uint64)(plocation[1])
+
+			if match.Chunk != nil {
+				mtr.Chunk = new(([]byte))
+				*mtr.Chunk = (*match.Chunk)[spos:epos]
+			}
+			mtr.Name = match.Location.Name
+			result.Matches = append(result.Matches, mtr)
+
+		}
+
 	}
 
-	var matches []memscan.MemMatch
-	var scannerMatch MemScanner
+}
 
+func main() {
+	au = aurora.NewAurora(true)
+	fmt.Println(au.Sprintf(au.Green("---- [ GoMemScan Ver: %s ] ----\n"), au.BrightGreen(version)))
+	args := parseCommandLineAndValidate()
+
+	/* Init Scanners */
+	var scannerMatch MemScanner
+	engine := ""
 	if args.pattern != "" {
 		engine = RE_SCANNER_NAME
 		scannerMatch, _ = SupportedModes[RE_SCANNER_NAME]
@@ -191,104 +296,64 @@ func main() {
 		fmt.Println(au.Sprintf(au.Red("Not valid match engine selected - Available modes: %v\n"), au.BrightBlue(SupportedModes)))
 		os.Exit(1)
 	}
-	//else yara
-	memInspect := func(chunk *[]byte, location memscan.MemRange, err error, workerNum int) uint8 {
-		// Here it will be possible to cancel the execution of next matches if needed
-		if err != nil {
-			fmt.Println(au.Sprintf(au.Red("-> Error scanning address at 0x%x (%s)"), au.BrightBlue(location.Start), au.BrightBlue(err)))
-			if errors.Is(err, os.ErrNotExist) {
-				return memscan.StopScan
-			}
-		}
-		if args.verbose {
-			fmt.Println(au.Sprintf(au.BrightYellow("Retrieved memory from: 0x%x to 0x%x"), au.White(location.Start), au.White(location.End)))
-		}
 
-		if scannerMatch.Match(chunk, location, workerNum) {
-			if args.stopAfterFirstMatch {
-				return memscan.StopScan
-			}
-
-		}
-		return memscan.ContinueScan
-	}
 	st := time.Now()
-	scanner.ScanMemory(process, &mRanges, args.bucketLen, memInspect, args.totalGoRoutines)
-	fmt.Println(au.Sprintf(au.BrightYellow("Scan time %d ms"), au.White(time.Since(st).Milliseconds())))
-	matches = scannerMatch.GetMatches()
-	/* Output results */
-	result := MemScanResult{Bsize: args.bucketLen, Pid: args.pid, ImageName: imageName, CmdLine: cmdLine, Engine: engine}
-	processOutput(&result, matches, args.includeRawDump, args.outputFile, args.contextLength, args.maxResults)
-	resultJson, err := json.MarshalIndent(result, "", "\t")
-	if args.outputFile != "" {
-		if err == nil {
-			saveRawChunk(&resultJson, args.outputFile)
-		} else {
-			fmt.Println(au.Sprintf(au.Red("-> Error generating json output (%s)"), au.BrightBlue(err)))
-		}
-	} else if args.printOutput {
-		fmt.Println(string(resultJson))
+
+	atLeastOneMatch := false
+	// Engine: engine}
+	var jsonResults [][]byte
+	allPids, err := memscan.GetProcessPidToScan(args.pid, args.allPids)
+	if err != nil {
+		fmt.Println(au.Sprintf(au.Red("Couldnt get processes id: %v\n"), au.BrightBlue(err)))
+		os.Exit(1)
 	}
-	if len(result.Matches) > 0 {
+
+	for _, pid := range allPids {
+		result, matches, err := initiPidScan(pid, args, scannerMatch)
+		if err != nil {
+			fmt.Println(au.Sprintf(au.Red("Error scanning pid %d: %v\n"), pid, au.BrightBlue(err)))
+			if args.allPids == false {
+				os.Exit(1)
+			}
+			result.Error = true
+		}
+		if result.Pid == 0 {
+			continue
+		}
+		result.Engine = engine
+		if len(result.Matches) > 0 {
+			atLeastOneMatch = true
+		}
+		if matches != nil {
+			processOutput(&result, *matches, args.includeRawDump, args.outputFile, args.contextLength, args.maxResults)
+		}
+		rJson, err := json.MarshalIndent(result, "", "\t")
+		if err != nil {
+			fmt.Println(au.Sprintf(au.Red("-> Error generating json output (%s)"), au.BrightBlue(err)))
+			continue
+		}
+		jsonResults = append(jsonResults, rJson)
+	}
+
+	fmt.Println(au.Sprintf(au.BrightYellow("Scan time %d ms"), au.White(time.Since(st).Milliseconds())))
+
+	if args.outputFile != "" {
+		saveRawChunk(&jsonResults, args.outputFile)
+	} else if args.printOutput {
+		fmt.Println("[")
+		//this is to avoid holding the entire mem matches while all pids are scanned
+		totalResults := len(jsonResults)
+		cChar := ","
+		for idx, rData := range jsonResults {
+			if idx+1 == totalResults {
+				cChar = ""
+			}
+			fmt.Println(string(rData) + cChar)
+		}
+		fmt.Println("]")
+	}
+	if atLeastOneMatch == true {
 		os.Exit(0)
 	}
 	os.Exit(2)
-
-}
-
-func saveRawChunk(data *[]byte, outputFile string) {
-
-	f, err := os.OpenFile(outputFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0755)
-
-	if err != nil {
-		fmt.Println(au.Sprintf(au.Red("Error: cannot save raw data to file %s (%s)"), au.BrightBlue(outputFile), au.BrightBlue(err)))
-		return
-	}
-	defer f.Close()
-	if _, err := f.Write(*data); err != nil {
-		fmt.Println(au.Sprintf(au.Red("Error: failed writing data to file (%s)"), au.BrightBlue(err)))
-	}
-}
-func processOutput(result *MemScanResult, matches []memscan.MemMatch, rawDump bool, outputFile string, contextLength, maxResults int) {
-
-	for _, match := range matches {
-
-		chunkLength := 0
-		if match.Chunk != nil {
-			chunkLength = len(*match.Chunk)
-		}
-		maxResults--
-		if chunkLength == 0 || maxResults < 0 {
-			continue
-		}
-
-		if rawDump {
-			saveRawChunk(match.Chunk, fmt.Sprintf("%s_start_%x_end_%x.raw", outputFile, match.Location.Start, match.Location.Start))
-		}
-		for _, plocation := range match.Pos {
-
-			spos := plocation[0] - contextLength
-			if spos < 0 {
-				spos = 0
-			}
-			epos := plocation[1] + contextLength
-			if epos > chunkLength-1 {
-				epos = chunkLength - 1
-			}
-			mtr := MemMatchResult{}
-			//plocation is int, so check if this work with larger chunks..
-			mtr.Location.Start = match.Location.Start + (uint64)(plocation[0])
-			mtr.Location.End = match.Location.Start + (uint64)(plocation[1])
-
-			if match.Chunk != nil {
-				mtr.Chunk = new(([]byte))
-				*mtr.Chunk = (*match.Chunk)[spos:epos]
-			}
-			mtr.Name = match.Location.Name
-			result.Matches = append(result.Matches, mtr)
-
-		}
-
-	}
-
 }

@@ -14,6 +14,7 @@ import (
 
 const (
 	PROCESS_ALL_ACCESS = syscall.STANDARD_RIGHTS_REQUIRED | syscall.SYNCHRONIZE | 0xfff
+	TH32CS_SNAPPROCESS = 0x2
 )
 
 func init() {
@@ -138,6 +139,34 @@ func GetProcess(pid int) (*MemScanProcess, error) {
 	}
 	ps := &MemScanProcess{Pid: pid, Handle: uintptr(h)}
 	return ps, nil
+}
+
+func GetProcessPidToScan(pid int, allPids bool) ([]int, error) {
+	if allPids == false {
+		return []int{pid}, nil
+	}
+	var pidsList []int
+	me := os.Getpid()
+
+	if handle, err := win.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0); err != nil {
+		return pidsList, err
+	} else {
+		var pEntry win.ProcessEntry32
+		pEntry.Size = (uint32)(unsafe.Sizeof(pEntry))
+		if err := win.Process32First(handle, &pEntry); err != nil {
+			return pidsList, err
+		}
+		for {
+			if pEntry.ProcessID > 4 && int(pEntry.ProcessID) != me {
+				pidsList = append(pidsList, int(pEntry.ProcessID))
+			}
+			if win.Process32Next(handle, &pEntry) != nil {
+				break
+			}
+		}
+
+	}
+	return pidsList, nil
 }
 
 //Just close a handle
