@@ -34,12 +34,15 @@ The current implementation supports Linux & Windows.
 
 ## Usage
 
+` It's important to add -fullscan unless the memory range to scane is known
+
 ```
 ./gomemscan -h
 ```
 
 | Arg        |  Details       | Default  |
 | ------------- |-------------|----------|
+| all-pids	| Scann all runining processes| False|
 | blen          | Chunk / Bucket size of memory where the patterns is going to search. (Memory will be split based on this size | 1048576 bytes |
 | colors        | Disabled / Enable console colors | True |
 | context-bytes | Bytes to print after/before the match as part of the context. (Ex: pepe in IamThePepeSapoEl with context 2 would output hepepesa )| 16 bytes |
@@ -93,7 +96,7 @@ or
 
 ---- [ GoMemScan Ver:  ] ----
 
-{
+[{
 	"Bsize": 1048576,
 	"Pid": 3863,
 	"ImageName": "/home/obelisco/a",
@@ -115,7 +118,7 @@ or
 			"Name": "/home/obelisco/a"
 		}
 	]
-}
+}]
 
 ```
 
@@ -145,7 +148,7 @@ rule DummyRule
 ---- [ GoMemScan Ver: 0.1.1-9a05019af3f6085af8c5d283f80fefcae823e920 ] ----
 
 Scan time 693 ms
-{
+[{
 	"Bsize": 1048576,
 	"Pid": 319,
 	"ImageName": "/usr/sbin/dhclient",
@@ -297,7 +300,7 @@ Scan time 693 ms
 			"Name": ""
 		}
 	]
-}
+}]
 ```
 
 # Sample Test Demo 
