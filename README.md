@@ -42,7 +42,7 @@ The current implementation supports Linux & Windows.
 
 | Arg        |  Details       | Default  |
 | ------------- |-------------|----------|
-| all-pids	| Scann all running processes| False|
+| all-pids	| Scan running processes| False|
 | blen          | Chunk / Bucket size of memory where the patterns is going to search. (Memory will be split based on this size | 1048576 bytes |
 | colors        | Disabled / Enable console colors | True |
 | context-bytes | Bytes to print after/before the match as part of the context. (Ex: pepe in IamThePepeSapoEl with context 2 would output hepepesa )| 16 bytes |
